@@ -161,15 +161,38 @@ annoying, or if you need Firefox/Safari to also get live writes:
       "note": "Good focus in the morning, slow afternoon.",
       "updatedAt": "2026-09-15T18:32:00.000Z"
     }
+  },
+  "months": {
+    "2026-09": {
+      "score": 5,
+      "note": "Strong month, hit the big deadline.",
+      "updatedAt": "2026-09-24T09:00:00.000Z"
+    }
+  },
+  "years": {
+    "2026": {
+      "score": 4,
+      "note": "Good year overall, rocky Q2.",
+      "updatedAt": "2026-09-24T09:00:00.000Z"
+    }
   }
 }
 ```
 
-- `days` is sparse: a date only gets an entry once it has a score and/or a
-  note; clearing both removes the key entirely.
-- `score` is an integer 0–6, or omitted if the day only has a note.
-- Validated on load (`js/storage.js` → `validate()`); a malformed file
-  shows an error on the load screen instead of silently corrupting data.
+- `days`, `months`, and `years` are three independent, sparse rating/note
+  tables — a key only gets an entry once it has a score and/or a note;
+  clearing both removes the key entirely. Rating a month or a year never
+  reads or writes anything under `days`, and vice versa — see "Mode" under
+  Features below.
+- `days` is keyed `"YYYY-MM-DD"`, `months` is keyed `"YYYY-MM"`, `years` is
+  keyed `"YYYY"` (a plain 4-digit year string).
+- `score` is an integer 0–6 in all three tables, or omitted if the entry
+  only has a note.
+- Validated on load (`js/storage.js` → `validate()` /
+  `validateKeyedScoreNoteMap()`); a malformed file shows an error on the
+  load screen instead of silently corrupting data. Files saved before this
+  feature existed simply have no `months`/`years` keys — they're defaulted
+  to `{}` on load, no migration needed.
 
 ## File structure
 
@@ -180,9 +203,9 @@ day-tracker/
 │   └── styles.css      All styling
 ├── js/
 │   ├── dateutils.js     Date math shared by everything (Monday-start weeks)
-│   ├── storage.js       Data model + file I/O (FSA + fallback) + project-folder memory (IndexedDB)
+│   ├── storage.js       Data model (days + months + years) + file I/O (FSA + fallback) + project-folder memory (IndexedDB)
 │   ├── period.js        Reusable Week/Month/Year/Custom[/All time] picker
-│   ├── calendar.js       Month grid + score/note editor panel + score-legend filter
+│   ├── calendar.js       Month grid + Day/Month/Year editor panel + score-legend filter
 │   ├── stats.js          "Score operations" panel (avg/sum/min/max/distribution)
 │   ├── search.js         Note search with period filter
 │   └── main.js           Boots the app, wires the load screen, save status
@@ -240,6 +263,37 @@ namespace is what makes "just double-click index.html" possible at all.
   `nextMatchingMonthKey()` / `prevMatchingMonthKey()` /
   `nearestMatchingMonthKey()`, and the filter-aware branches in
   `goPrevMonth()` / `goNextMonth()` / `renderMonthGrid()`.
+- **Mode: Day / Month / Year** — a dropdown in the bottom-right of the
+  calendar panel (next to the score legend) switches which of three
+  entirely independent rating/note systems the side panel edits:
+  - **Day** (default): the original per-date score/note described above.
+  - **Month**: rates/notes whichever month is currently visible in the
+    calendar (its title becomes e.g. "September 2026"; every in-month day
+    cell gets a soft highlight, `.day-cell-month-target`, so it's clear
+    which month a score/note would apply to). **‹ / ›** and Shift+←/→
+    still step by month, just like Day mode, moving which month is being
+    rated as they go.
+  - **Year**: rates/notes whichever year the visible month falls in (its
+    title becomes just the year, e.g. "2026"). **‹ / ›** and Shift+←/→
+    switch to stepping a **whole year** at a time instead of a month
+    while this mode is active.
+
+  Whichever mode is active, "Save note" / autosave-on-navigate /
+  "Clear this ___" all act on that mode's own store
+  (`storage.months`/`storage.years`, never `storage.days`) — rating a
+  month or year never creates, changes, or clears any individual day.
+  The calendar grid itself always keeps showing the day view underneath,
+  purely for browsing context; clicking any day cell immediately snaps
+  Mode back to **Day** and selects that day, so switching into Month/Year
+  mode is never a dead end. The score-legend filter chips are Day-mode-only
+  (they filter individual days by score) and are hidden while Mode is
+  Month or Year; any active day filter is cleared automatically when you
+  switch away from Day mode. Implemented in `js/calendar.js`: `setMode()`,
+  `currentKey()` / `currentEntry()` / `setCurrentScore()` (the mode
+  dispatch layer used by the score buttons, note save/autosave, and
+  Clear), `goPrevYear()` / `goNextYear()`, and the mirrored
+  `getMonth/setMonthScore/setMonthNote/clearMonth` and
+  `getYear/setYearScore/setYearNote/clearYear` methods in `js/storage.js`.
 
 ## Colour palette
 
@@ -266,11 +320,16 @@ node tests/persistence-test.js
   calendar/stats/search panels, clears a day, and validates the downloaded
   JSON against the schema, exercises the ←/→ and Shift+←/→ keyboard
   shortcuts including the guard that keeps them out of the way inside the
-  note field, and — for the score-legend filter — seeds matching days two
+  note field, — for the score-legend filter — seeds matching days two
   months apart, clicks a legend chip, checks that non-matching cells are
   blanked and the status line reports the right count, confirms ‹ / ›
   jump straight between the two matching months skipping the empty one in
-  between, and confirms clicking the chip again restores every cell). 29
+  between, and confirms clicking the chip again restores every cell, and
+  — for the Mode dropdown — switches to Month mode and confirms the
+  editor title/legend visibility change, rates a month and confirms it
+  lands in `storage.months` untouched by `storage.days`, switches to Year
+  mode and confirms ‹ / › now steps whole years, and confirms clicking a
+  day cell snaps back to Day mode with that day's own data intact). 35
   checks.
 - **`tests/persistence-test.js`** specifically covers the project-folder
   memory feature: it launches a real Chromium profile, sets a project
@@ -285,7 +344,7 @@ node tests/persistence-test.js
   origins — the shipped app is unaffected, this is purely a test-harness
   detail (see the comments at the top of the file). 5 checks.
 
-This is how the app was verified while building it — all 34 checks across
+This is how the app was verified while building it — all 40 checks across
 both scripts pass.
 
 ## Known limitations
@@ -303,6 +362,12 @@ both scripts pass.
   profile, or opening `index.html` from a different path all mean it
   won't be found — you'd pick it again (or click "Reconnect" if
   permission just needs re-granting).
+- Month/Year mode has no dedicated "jump to a specific month/year" input
+  of its own — you get there via ‹ / › (which step by year while in Year
+  mode), Shift+←/→, or by using Go to date/Today in Day mode and then
+  switching Mode. There's also no month/year equivalent of the score
+  filter or Score-operations/Search panels yet — those still summarize
+  only the day-level data.
 
 ## Working with Claude on this project
 
@@ -316,3 +381,19 @@ both scripts pass.
   proactively whenever a Claude session's context is getting full
   (around 90%), so project state and history aren't lost to context
   limits mid-conversation.
+
+## Version control
+
+This folder is a git repo tracking
+[github.com/CaligolaGG/MyLifeScores](https://github.com/CaligolaGG/MyLifeScores)
+(`origin/main`). A `.gitignore` deliberately excludes:
+
+- `diaries/*.json` — your real data file (scores/notes). Only
+  `diaries/README.md` is tracked. This is personal data and was kept out
+  of the repo on purpose; if you ever want a specific data file version-
+  controlled too, `git add -f` it explicitly.
+- `Claude outputs/` — a working folder used during Claude sessions, not
+  part of the app.
+
+To push further changes yourself: `git add -A && git commit -m "..." && git push`
+from this folder (Git for Windows, or any shell with access to it).

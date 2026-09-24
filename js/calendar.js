@@ -32,6 +32,7 @@
     viewDate: du.startOfMonth(new Date()),
     selectedDateStr: du.toDateStr(new Date()),
     filterScore: null, // null = show every day; 0-6 = spotlight only that score
+    mode: "day", // "day" | "month" | "year" — which independent rating/note system the side panel edits
   };
 
   function cacheEls() {
@@ -43,9 +44,11 @@
     els.btnNext = document.getElementById("btnNextMonth");
     els.btnToday = document.getElementById("btnToday");
     els.goToDateInput = document.getElementById("goToDateInput");
+    els.modeSelect = document.getElementById("modeSelect");
 
     els.filterStatus = document.getElementById("filterStatus");
 
+    els.editorPanel = document.getElementById("editorPanel");
     els.editorDate = document.getElementById("editorDate");
     els.scoreButtons = document.getElementById("scoreButtons");
     els.noteBlock = document.getElementById("noteBlock");
@@ -134,6 +137,88 @@
     return nextMatchingMonthKey(months, fromKey) || prevMatchingMonthKey(months, fromKey);
   }
 
+  // -----------------------------------------------------------------
+  // Mode: three independent, parallel rating/note systems sharing this
+  // one side panel — Day (the original per-date one, keyed by
+  // "YYYY-MM-DD"), Month (keyed by "YYYY-MM"), and Year (keyed by
+  // "YYYY"). Whichever is active is entirely separate storage
+  // (App.storage.{get,set}{Month,Year}{Score,Note}) from the others; the
+  // day grid stays visible in every mode purely for browsing context.
+  // -----------------------------------------------------------------
+
+  function yearKeyOf(date) {
+    return String(date.getFullYear());
+  }
+
+  function yearKeyToDate(key) {
+    return new Date(Number(key), 0, 1);
+  }
+
+  /** The key (date/month/year string) the side panel is currently bound to. */
+  function currentKey() {
+    if (state.mode === "month") return monthKeyOf(state.viewDate);
+    if (state.mode === "year") return yearKeyOf(state.viewDate);
+    return state.selectedDateStr;
+  }
+
+  function currentEntry() {
+    if (state.mode === "month") return App.storage.getMonth(currentKey());
+    if (state.mode === "year") return App.storage.getYear(currentKey());
+    return App.storage.getDay(currentKey());
+  }
+
+  function setCurrentScore(score) {
+    const key = currentKey();
+    if (state.mode === "month") return App.storage.setMonthScore(key, score);
+    if (state.mode === "year") return App.storage.setYearScore(key, score);
+    return App.storage.setScore(key, score);
+  }
+
+  function editorTitleFor(mode, key) {
+    if (mode === "month") return du.formatMonthYear(monthKeyToDate(key));
+    if (mode === "year") return key;
+    return du.formatHuman(du.parseDateStr(key));
+  }
+
+  function notePlaceholderFor(mode) {
+    if (mode === "month") return "Write something about this month…";
+    if (mode === "year") return "Write something about this year…";
+    return "Write something about this day…";
+  }
+
+  function clearLabelFor(mode) {
+    if (mode === "month") return "Clear this month";
+    if (mode === "year") return "Clear this year";
+    return "Clear this day";
+  }
+
+  function ariaLabelFor(mode) {
+    if (mode === "month") return "Month editor";
+    if (mode === "year") return "Year editor";
+    return "Day editor";
+  }
+
+  function updateLegendVisibility() {
+    // The score-legend filter chips spotlight individual DAYS by score, so
+    // they (and their status line) only make sense in Day mode.
+    const dayMode = state.mode === "day";
+    if (els.legend) els.legend.hidden = !dayMode;
+    if (els.filterStatus && !dayMode) els.filterStatus.hidden = true;
+  }
+
+  async function setMode(newMode) {
+    if (newMode === state.mode) return;
+    await autoSaveNoteIfDirty(); // flush whatever's dirty under the OLD mode/key first
+    state.mode = newMode;
+    if (els.modeSelect) els.modeSelect.value = newMode;
+    if (newMode !== "day" && state.filterScore != null) {
+      state.filterScore = null; // the day-score filter only applies in Day mode
+      renderLegend();
+    }
+    updateLegendVisibility();
+    renderAll();
+  }
+
   function toggleFilter(score) {
     state.filterScore = state.filterScore === score ? null : score;
 
@@ -161,6 +246,7 @@
 
     const todayStr = du.toDateStr(new Date());
     const filterScore = state.filterScore;
+    const highlightMonthTarget = state.mode === "month";
     let matchesInMonth = 0;
 
     let cur = gridStart;
@@ -177,6 +263,7 @@
       if (dateStr === todayStr) cell.classList.add("day-cell-today");
       if (dateStr === state.selectedDateStr) cell.classList.add("day-cell-selected");
       if (!matchesFilter) cell.classList.add("day-cell-filtered");
+      if (highlightMonthTarget && inMonth) cell.classList.add("day-cell-month-target");
       cell.dataset.date = dateStr;
 
       // A filtered-out day is emptied (per the "filtered days are removed"
@@ -203,7 +290,13 @@
         }
       }
 
-      cell.addEventListener("click", () => selectDate(dateStr));
+      cell.addEventListener("click", async () => {
+        // Clicking a day always means "look at this day" — if a Month/Year
+        // rating was showing, switch back to Day mode first so the side
+        // panel actually reflects the day just clicked.
+        if (state.mode !== "day") await setMode("day");
+        selectDate(dateStr);
+      });
       els.grid.appendChild(cell);
 
       cur = du.addDays(cur, 1);
@@ -228,7 +321,7 @@
 
   function renderScoreButtons() {
     els.scoreButtons.innerHTML = "";
-    const entry = App.storage.getDay(state.selectedDateStr);
+    const entry = currentEntry();
     const current = entry ? entry.score : null;
 
     for (let s = App.storage.MIN_SCORE; s <= App.storage.MAX_SCORE; s++) {
@@ -240,49 +333,59 @@
       if (current === s) b.classList.add("active");
       b.addEventListener("click", async () => {
         const next = current === s ? null : s; // click again to clear
-        await App.storage.setScore(state.selectedDateStr, next);
+        await setCurrentScore(next);
         renderScoreButtons();
-        renderMonthGrid();
+        if (state.mode === "day") renderMonthGrid();
       });
       els.scoreButtons.appendChild(b);
     }
   }
 
   function renderEditor() {
-    const date = du.parseDateStr(state.selectedDateStr);
-    els.editorDate.textContent = du.formatHuman(date);
+    const key = currentKey();
+    els.editorDate.textContent = editorTitleFor(state.mode, key);
     renderScoreButtons();
 
-    const entry = App.storage.getDay(state.selectedDateStr);
+    const entry = currentEntry();
     els.noteField.value = entry && entry.note ? entry.note : "";
+    els.noteField.placeholder = notePlaceholderFor(state.mode);
     els.noteStatus.textContent = "";
+    if (els.btnClearDay) els.btnClearDay.textContent = clearLabelFor(state.mode);
+    if (els.editorPanel) els.editorPanel.setAttribute("aria-label", ariaLabelFor(state.mode));
   }
 
   /**
-   * If the note field has unsaved edits for the day we're currently on,
-   * save them before we navigate away — so switching days never silently
-   * drops what you typed.
+   * If the note field has unsaved edits for whatever the side panel is
+   * currently bound to (a day, a month, or a year — see "mode" above),
+   * save them before we navigate/switch away — so nothing typed is ever
+   * silently dropped.
    */
   async function autoSaveNoteIfDirty() {
-    if (!els.noteField || state.selectedDateStr == null) return;
-    const entry = App.storage.getDay(state.selectedDateStr);
+    if (!els.noteField) return;
+    const mode = state.mode;
+    const key = currentKey();
+    if (key == null) return;
+    const entry = currentEntry();
     const storedNote = entry && entry.note ? entry.note : "";
     const currentValue = els.noteField.value;
     if (currentValue === storedNote) return; // nothing to do
-    // No status text here: we're navigating away from this day, so the
-    // "Saved" message would belong to a note field the user is no longer
-    // looking at. The flash (triggered inside saveNoteFor) is the feedback.
-    await saveNoteFor(state.selectedDateStr, currentValue, { showStatus: false });
+    // No status text here: we're navigating away, so the "Saved" message
+    // would belong to a side panel the user is no longer looking at. The
+    // flash (triggered inside saveNoteFor) is the feedback.
+    await saveNoteFor(mode, key, currentValue, { showStatus: false });
   }
 
-  /** Shared by the "Save note" button and the switch-day autosave above. */
-  async function saveNoteFor(dateStr, text, opts) {
+  /** Shared by the "Save note" button and the switch-away autosave above. */
+  async function saveNoteFor(mode, key, text, opts) {
     opts = opts || {};
     const showStatus = opts.showStatus !== false;
-    await App.storage.setNote(dateStr, text);
-    renderMonthGrid();
+    if (mode === "month") await App.storage.setMonthNote(key, text);
+    else if (mode === "year") await App.storage.setYearNote(key, text);
+    else await App.storage.setNote(key, text);
+
+    if (mode === "day") renderMonthGrid(); // day note-mark on the grid only applies to Day mode
     flashNoteSaved();
-    if (showStatus && dateStr === state.selectedDateStr) {
+    if (showStatus && mode === state.mode && key === currentKey()) {
       els.noteStatus.textContent = "Saved ✓";
       clearTimeout(saveNoteFor._statusTimer);
       saveNoteFor._statusTimer = setTimeout(() => {
@@ -325,30 +428,56 @@
     return selectDate(dateStr);
   }
 
-  function goPrevMonth() {
+  async function goPrevMonth() {
+    await autoSaveNoteIfDirty();
     if (state.filterScore != null) {
       const months = monthsWithScore(state.filterScore);
       const prevKey = prevMatchingMonthKey(months, monthKeyOf(state.viewDate));
       if (!prevKey) return; // nothing further back with this score — stay put
       state.viewDate = monthKeyToDate(prevKey);
-      renderMonthGrid();
-      return;
+    } else {
+      state.viewDate = du.addMonths(state.viewDate, -1);
     }
-    state.viewDate = du.addMonths(state.viewDate, -1);
     renderMonthGrid();
+    if (state.mode !== "day") renderEditor(); // Month mode's target follows the visible month
   }
 
-  function goNextMonth() {
+  async function goNextMonth() {
+    await autoSaveNoteIfDirty();
     if (state.filterScore != null) {
       const months = monthsWithScore(state.filterScore);
       const nextKey = nextMatchingMonthKey(months, monthKeyOf(state.viewDate));
       if (!nextKey) return; // nothing further ahead with this score — stay put
       state.viewDate = monthKeyToDate(nextKey);
-      renderMonthGrid();
-      return;
+    } else {
+      state.viewDate = du.addMonths(state.viewDate, 1);
     }
-    state.viewDate = du.addMonths(state.viewDate, 1);
     renderMonthGrid();
+    if (state.mode !== "day") renderEditor();
+  }
+
+  /** Year mode: ‹ / › (and Shift+←/→) step a whole year at a time instead. */
+  async function goPrevYear() {
+    await autoSaveNoteIfDirty();
+    state.viewDate = du.addYears(state.viewDate, -1);
+    renderMonthGrid();
+    renderEditor();
+  }
+
+  async function goNextYear() {
+    await autoSaveNoteIfDirty();
+    state.viewDate = du.addYears(state.viewDate, 1);
+    renderMonthGrid();
+    renderEditor();
+  }
+
+  /** ‹ / › and Shift+←/→ both go through here so they follow the active mode. */
+  function goPrev() {
+    return state.mode === "year" ? goPrevYear() : goPrevMonth();
+  }
+
+  function goNext() {
+    return state.mode === "year" ? goNextYear() : goNextMonth();
   }
 
   function goToday() {
@@ -361,11 +490,15 @@
   }
 
   function saveNote() {
-    return saveNoteFor(state.selectedDateStr, els.noteField.value);
+    return saveNoteFor(state.mode, currentKey(), els.noteField.value);
   }
 
-  async function clearDay() {
-    await App.storage.clearDay(state.selectedDateStr);
+  async function clearCurrent() {
+    const mode = state.mode;
+    const key = currentKey();
+    if (mode === "month") await App.storage.clearMonth(key);
+    else if (mode === "year") await App.storage.clearYear(key);
+    else await App.storage.clearDay(key);
     renderAll();
   }
 
@@ -390,8 +523,8 @@
     const dir = e.key === "ArrowRight" ? 1 : -1;
 
     if (e.shiftKey) {
-      if (dir > 0) goNextMonth();
-      else goPrevMonth();
+      if (dir > 0) goNext();
+      else goPrev();
     } else {
       const next = du.addDays(du.parseDateStr(state.selectedDateStr), dir);
       selectDate(du.toDateStr(next));
@@ -402,18 +535,24 @@
     cacheEls();
     renderWeekdayRow();
     renderLegend();
+    updateLegendVisibility();
 
-    els.btnPrev.addEventListener("click", goPrevMonth);
-    els.btnNext.addEventListener("click", goNextMonth);
+    els.btnPrev.addEventListener("click", goPrev);
+    els.btnNext.addEventListener("click", goNext);
     els.btnToday.addEventListener("click", goToday);
     els.btnSaveNote.addEventListener("click", saveNote);
-    els.btnClearDay.addEventListener("click", clearDay);
+    els.btnClearDay.addEventListener("click", clearCurrent);
     els.goToDateInput.addEventListener("change", () => goToDate(els.goToDateInput.value));
+    if (els.modeSelect) {
+      els.modeSelect.addEventListener("change", () => setMode(els.modeSelect.value));
+    }
     document.addEventListener("keydown", handleGlobalKeydown);
 
     state.viewDate = du.startOfMonth(new Date());
     state.selectedDateStr = du.toDateStr(new Date());
     state.filterScore = null;
+    state.mode = "day";
+    if (els.modeSelect) els.modeSelect.value = "day";
     renderAll();
   }
 

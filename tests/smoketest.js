@@ -360,6 +360,98 @@ const assert = require("assert");
   await page.evaluate(() => App.calendar.renderAll());
   await page.waitForTimeout(30);
 
+  // --- Mode dropdown: independent Month and Year rating/note systems ----
+  const modeSelectOptions = await page.$$eval("#modeSelect option", (els) => els.map((e) => e.value));
+  assert.deepStrictEqual(modeSelectOptions, ["day", "month", "year"], "Mode dropdown should offer day/month/year");
+
+  const dayEditorTitle = await page.textContent("#editorDate");
+  const dayNoteBefore = await page.inputValue("#noteField");
+
+  // switch to Month mode
+  await page.selectOption("#modeSelect", "month");
+  await page.waitForTimeout(30);
+  const editorTitleInMonthMode = await page.textContent("#editorDate");
+  const calendarTitleNow = await page.textContent("#calendarTitle");
+  assert.strictEqual(editorTitleInMonthMode, calendarTitleNow, "Month mode editor title should match the visible month (e.g. 'September 2026')");
+  assert.strictEqual(await page.isHidden("#scoreLegend"), true, "score legend (a Day-mode-only filter) should be hidden in Month mode");
+  console.log("PASS: switching Mode to Month shows a month-scoped editor title and hides the day-score legend");
+
+  // rate the current month independently of any day score
+  const monthScoreButtons = await page.$$("#scoreButtons .score-btn");
+  await monthScoreButtons[6].click(); // score = 6
+  await page.waitForTimeout(30);
+  await page.fill("#noteField", "Great month overall.");
+  await page.click("#btnSaveNote");
+  await page.waitForSelector("#noteStatus:has-text(\"Saved\")");
+  const monthKeyNow = await page.evaluate(() => {
+    const d = App.dateutils.startOfMonth(new Date());
+    return d.getFullYear() + "-" + App.dateutils.pad2(d.getMonth() + 1);
+  });
+  const savedMonthEntry = await page.evaluate((mk) => App.storage.getMonth(mk), monthKeyNow);
+  assert.strictEqual(savedMonthEntry.score, 6, "month score should be saved under storage.months, not storage.days");
+  assert.strictEqual(savedMonthEntry.note, "Great month overall.", "month note should be saved under storage.months");
+  console.log("PASS: rating/noting a month in Month mode saves to an independent months store");
+
+  // the day-level data must be completely untouched by the month rating
+  const dayEntryUnaffected = await page.evaluate(
+    (ds) => App.storage.getDay(ds),
+    todayStr
+  );
+  assert.strictEqual(dayEntryUnaffected, null, "rating the month must not create/alter any day entry");
+  console.log("PASS: Month mode ratings/notes are independent of the Day rating system");
+
+  // switch to Year mode
+  await page.selectOption("#modeSelect", "year");
+  await page.waitForTimeout(30);
+  const currentYearStr = String(new Date().getFullYear());
+  const editorTitleInYearMode = await page.textContent("#editorDate");
+  assert.strictEqual(editorTitleInYearMode, currentYearStr, "Year mode editor title should show just the year, e.g. '2026'");
+
+  const yearScoreButtons = await page.$$("#scoreButtons .score-btn");
+  await yearScoreButtons[1].click(); // score = 1
+  await page.fill("#noteField", "Rough year so far.");
+  await page.click("#btnSaveNote");
+  await page.waitForSelector("#noteStatus:has-text(\"Saved\")");
+  const savedYearEntry = await page.evaluate((yk) => App.storage.getYear(yk), currentYearStr);
+  assert.strictEqual(savedYearEntry.score, 1, "year score should be saved under storage.years");
+  assert.strictEqual(savedYearEntry.note, "Rough year so far.", "year note should be saved under storage.years");
+  console.log("PASS: rating/noting a year in Year mode saves to an independent years store");
+
+  // Year mode: ‹ / › step by whole years, not months
+  const calTitleBeforeYearNav = await page.textContent("#calendarTitle");
+  await page.click("#btnNextMonth"); // same button, now dispatches to year-stepping while in Year mode
+  await page.waitForTimeout(30);
+  const calTitleAfterYearNav = await page.textContent("#calendarTitle");
+  const yearBefore = calTitleBeforeYearNav.split(" ").pop();
+  const yearAfter = calTitleAfterYearNav.split(" ").pop();
+  assert.strictEqual(Number(yearAfter), Number(yearBefore) + 1, "‹/› should step a whole year at a time while Mode is Year");
+  console.log("PASS: ‹/› navigation steps by year while Mode is set to Year");
+  await page.click("#btnPrevMonth"); // back to the original year
+  await page.waitForTimeout(30);
+
+  // clicking a day cell always snaps back to Day mode
+  await page.click(`.day-cell[data-date="${todayStr}"]`);
+  await page.waitForTimeout(30);
+  const modeAfterCellClick = await page.inputValue("#modeSelect");
+  assert.strictEqual(modeAfterCellClick, "day", "clicking a day cell should switch Mode back to Day");
+  assert.strictEqual(await page.isHidden("#scoreLegend"), false, "score legend should reappear once back in Day mode");
+  const dayEditorTitleRestored = await page.textContent("#editorDate");
+  assert.strictEqual(dayEditorTitleRestored, dayEditorTitle, "the day editor should show the clicked day again");
+  const dayNoteRestored = await page.inputValue("#noteField");
+  assert.strictEqual(dayNoteRestored, dayNoteBefore, "the day's own note should be exactly as it was before entering Month/Year mode");
+  console.log("PASS: clicking a day cell snaps Mode back to Day and restores the day editor");
+
+  // clean up the seeded month/year entries so they don't affect stats/search below
+  await page.evaluate(
+    async ({ mk, yk }) => {
+      await App.storage.clearMonth(mk);
+      await App.storage.clearYear(yk);
+    },
+    { mk: monthKeyNow, yk: currentYearStr }
+  );
+  await page.evaluate(() => App.calendar.renderAll());
+  await page.waitForTimeout(30);
+
   // --- save & download produces valid JSON matching the schema ----------
   await page.click("#scoreButtons .score-btn:nth-child(3)"); // score = 2, to have something to export
   await page.fill("#noteField", "Export check.");

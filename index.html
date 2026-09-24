@@ -88,11 +88,21 @@
       </div>
       <div class="weekday-row" id="weekdayRow"></div>
       <div class="calendar-grid" id="calendarGrid"></div>
-      <div class="score-legend" id="scoreLegend"></div>
+      <div class="calendar-footer-row">
+        <div class="score-legend" id="scoreLegend"></div>
+        <div class="mode-select-block">
+          <label for="modeSelect" class="mode-select-label">Mode</label>
+          <select id="modeSelect" class="mode-select">
+            <option value="day">Day</option>
+            <option value="month">Month</option>
+            <option value="year">Year</option>
+          </select>
+        </div>
+      </div>
       <p class="filter-status" id="filterStatus" hidden aria-live="polite"></p>
     </section>
 
-    <aside class="side-panel" aria-label="Day editor">
+    <aside class="side-panel" id="editorPanel" aria-label="Day editor">
       <h2 id="editorDate" class="editor-date">—</h2>
 
       <div class="editor-block">

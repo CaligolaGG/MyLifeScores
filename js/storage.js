@@ -43,6 +43,11 @@
       createdAt: nowIso(),
       updatedAt: nowIso(),
       days: {},
+      // Independent, parallel rating/note systems — a month (e.g. "2026-12")
+      // or a whole year (e.g. "2027") can have its own score+note, entirely
+      // separate from any day inside it. See "Mode" in the calendar panel.
+      months: {},
+      years: {},
     };
   }
 
@@ -72,8 +77,43 @@
         }
       }
     }
+    validateKeyedScoreNoteMap(obj, "months", /^\d{4}-\d{2}$/, "month");
+    validateKeyedScoreNoteMap(obj, "years", /^\d{4}$/, "year");
+
     if (typeof obj.schemaVersion !== "number") obj.schemaVersion = SCHEMA_VERSION;
     return obj;
+  }
+
+  /**
+   * Shared validation for the "months" and "years" maps: same shape as
+   * "days" (an optional {score, note, updatedAt} per key), just keyed
+   * differently. Files from before this feature won't have these keys at
+   * all — that's fine, they're defaulted to {} rather than treated as an
+   * error, so older data files keep opening normally.
+   */
+  function validateKeyedScoreNoteMap(obj, field, keyPattern, label) {
+    if (obj[field] == null) {
+      obj[field] = {};
+      return;
+    }
+    if (typeof obj[field] !== "object" || Array.isArray(obj[field])) {
+      throw new Error(`File has an invalid "${field}" object.`);
+    }
+    for (const key of Object.keys(obj[field])) {
+      if (!keyPattern.test(key)) {
+        throw new Error(`Invalid ${label} key in data: "${key}"`);
+      }
+      const entry = obj[field][key];
+      if (entry && typeof entry !== "object") {
+        throw new Error(`Invalid entry for ${label} "${key}"`);
+      }
+      if (entry && entry.score != null) {
+        const s = Number(entry.score);
+        if (!Number.isInteger(s) || s < MIN_SCORE || s > MAX_SCORE) {
+          throw new Error(`Invalid score for ${label} "${key}": ${entry.score}`);
+        }
+      }
+    }
   }
 
   // Groups our two file pickers under one id so Chrome/Edge remember the
@@ -423,6 +463,133 @@
       return Object.keys(state.data.days)
         .sort()
         .map((k) => [k, state.data.days[k]]);
+    },
+
+    // ---------------------------------------------------------------
+    // Month ratings/notes: a second, independent {score, note} per
+    // "YYYY-MM" key. Entirely separate from any day inside that month —
+    // see the "Mode" selector in calendar.js.
+    // ---------------------------------------------------------------
+
+    getMonth(monthKey) {
+      return (state.data.months && state.data.months[monthKey]) || null;
+    },
+
+    async setMonthScore(monthKey, score) {
+      const months = state.data.months;
+      const entry = months[monthKey] || {};
+      if (score == null) {
+        delete entry.score;
+      } else {
+        const s = Number(score);
+        if (!Number.isInteger(s) || s < MIN_SCORE || s > MAX_SCORE) {
+          throw new Error("Score must be an integer between " + MIN_SCORE + " and " + MAX_SCORE + ".");
+        }
+        entry.score = s;
+      }
+      entry.updatedAt = nowIso();
+      if (entry.score == null && !entry.note) {
+        delete months[monthKey];
+      } else {
+        months[monthKey] = entry;
+      }
+      await storage.persist();
+      App.onDataChanged && App.onDataChanged({ monthKey });
+    },
+
+    async setMonthNote(monthKey, note) {
+      const months = state.data.months;
+      const entry = months[monthKey] || {};
+      const trimmed = (note || "").toString();
+      if (trimmed) {
+        entry.note = trimmed;
+      } else {
+        delete entry.note;
+      }
+      entry.updatedAt = nowIso();
+      if (entry.score == null && !entry.note) {
+        delete months[monthKey];
+      } else {
+        months[monthKey] = entry;
+      }
+      await storage.persist();
+      App.onDataChanged && App.onDataChanged({ monthKey });
+    },
+
+    async clearMonth(monthKey) {
+      delete state.data.months[monthKey];
+      await storage.persist();
+      App.onDataChanged && App.onDataChanged({ monthKey });
+    },
+
+    /** All [monthKey, entry] pairs, sorted ascending. */
+    allMonthEntries() {
+      return Object.keys(state.data.months)
+        .sort()
+        .map((k) => [k, state.data.months[k]]);
+    },
+
+    // ---------------------------------------------------------------
+    // Year ratings/notes: a third, independent {score, note} per "YYYY"
+    // key. Also entirely separate from days and months.
+    // ---------------------------------------------------------------
+
+    getYear(yearKey) {
+      return (state.data.years && state.data.years[yearKey]) || null;
+    },
+
+    async setYearScore(yearKey, score) {
+      const years = state.data.years;
+      const entry = years[yearKey] || {};
+      if (score == null) {
+        delete entry.score;
+      } else {
+        const s = Number(score);
+        if (!Number.isInteger(s) || s < MIN_SCORE || s > MAX_SCORE) {
+          throw new Error("Score must be an integer between " + MIN_SCORE + " and " + MAX_SCORE + ".");
+        }
+        entry.score = s;
+      }
+      entry.updatedAt = nowIso();
+      if (entry.score == null && !entry.note) {
+        delete years[yearKey];
+      } else {
+        years[yearKey] = entry;
+      }
+      await storage.persist();
+      App.onDataChanged && App.onDataChanged({ yearKey });
+    },
+
+    async setYearNote(yearKey, note) {
+      const years = state.data.years;
+      const entry = years[yearKey] || {};
+      const trimmed = (note || "").toString();
+      if (trimmed) {
+        entry.note = trimmed;
+      } else {
+        delete entry.note;
+      }
+      entry.updatedAt = nowIso();
+      if (entry.score == null && !entry.note) {
+        delete years[yearKey];
+      } else {
+        years[yearKey] = entry;
+      }
+      await storage.persist();
+      App.onDataChanged && App.onDataChanged({ yearKey });
+    },
+
+    async clearYear(yearKey) {
+      delete state.data.years[yearKey];
+      await storage.persist();
+      App.onDataChanged && App.onDataChanged({ yearKey });
+    },
+
+    /** All [yearKey, entry] pairs, sorted ascending. */
+    allYearEntries() {
+      return Object.keys(state.data.years)
+        .sort()
+        .map((k) => [k, state.data.years[k]]);
     },
   });
 
