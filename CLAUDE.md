@@ -303,3 +303,16 @@ both scripts pass.
   profile, or opening `index.html` from a different path all mean it
   won't be found — you'd pick it again (or click "Reconnect" if
   permission just needs re-granting).
+
+## Working with Claude on this project
+
+- Delivery: changed files are written straight into this project folder
+  (`Z:\my_apps\MyLifeScores`) as work happens — **no `day-tracker.zip` is
+  created inside the folder anymore**; a zip is only sent as a chat
+  download when explicitly asked for. Don't be surprised if there's no
+  zip sitting next to the app files — that's intentional as of the
+  score-filter feature.
+- This file is kept current after every feature, and is also updated
+  proactively whenever a Claude session's context is getting full
+  (around 90%), so project state and history aren't lost to context
+  limits mid-conversation.
