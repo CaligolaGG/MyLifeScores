@@ -1,0 +1,5 @@
+# Personal data - not meant to be pushed to the repo
+diaries/*.json
+
+# Anthropic Claude Cowork scratch/output folder
+Claude outputs/

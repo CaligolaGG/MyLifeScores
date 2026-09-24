@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day Tracker</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ============================================================
+     LOAD SCREEN — shown until a data file has been opened/created.
+     No file handle or data is ever remembered between page loads,
+     so this screen appears every time index.html is opened.
+     ============================================================ -->
+<div id="loadScreen" class="load-screen">
+  <div class="load-card">
+    <h1>Day Tracker</h1>
+    <p class="load-sub">
+      A local calendar for daily scores &amp; notes. Your data lives in a single
+      JSON file on your computer — nothing is uploaded anywhere, and nothing is
+      cached in the browser.
+    </p>
+
+    <div id="fsaButtons" class="load-actions" hidden>
+      <button id="btnOpenFSA" class="btn btn-primary">Open existing data file</button>
+      <button id="btnNewFSA" class="btn btn-secondary">Create new data file</button>
+    </div>
+
+    <div id="fallbackButtons" class="load-actions" hidden>
+      <p class="load-warning">
+        This browser doesn't support live file saving (Chrome or Edge do).
+        You can still use the app in <strong>compatibility mode</strong>: import a
+        file below, then use <strong>Save &amp; Download</strong> after making
+        changes and replace the old file with the downloaded one.
+      </p>
+      <label class="btn btn-primary file-label">
+        Import existing data file
+        <input type="file" id="fallbackImportInput" accept="application/json" hidden>
+      </label>
+      <button id="btnNewFallback" class="btn btn-secondary">Start a new data file</button>
+    </div>
+
+    <div id="dropzone" class="dropzone">
+      <span class="dropzone-icon" aria-hidden="true">&#8615;</span>
+      <span>or drag &amp; drop a data file here</span>
+    </div>
+
+    <div id="projectFolderRow" class="project-folder-row">
+      <button id="btnSetProjectFolder" class="btn btn-ghost btn-small" hidden>
+        Set project folder&hellip;
+      </button>
+      <button id="btnReconnectProjectFolder" class="btn btn-secondary btn-small" hidden></button>
+      <button id="btnForgetProjectFolder" class="btn btn-ghost btn-small" hidden>
+        Forget remembered folder
+      </button>
+    </div>
+    <p id="projectFolderHint" class="load-hint" hidden></p>
+
+    <p id="loadError" class="load-error" hidden></p>
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN APP — hidden until storage.state.data is populated.
+     ============================================================ -->
+<div id="app" class="app" hidden>
+
+  <header class="app-header">
+    <h1>Day Tracker</h1>
+    <div class="file-status">
+      <span id="fileName" class="file-name"></span>
+      <span id="saveStatus" class="save-status"></span>
+      <button id="btnSaveNow" class="btn btn-small" hidden>Save &amp; Download</button>
+      <button id="btnSwitchFile" class="btn btn-ghost btn-small">Switch file</button>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <section class="calendar-panel" aria-label="Calendar">
+      <div class="calendar-toolbar">
+        <button id="btnPrevMonth" class="btn btn-icon" aria-label="Previous month">&#8249;</button>
+        <h2 id="calendarTitle" class="calendar-title"></h2>
+        <button id="btnNextMonth" class="btn btn-icon" aria-label="Next month">&#8250;</button>
+        <button id="btnToday" class="btn btn-ghost btn-small">Today</button>
+        <input type="date" id="goToDateInput" class="goto-date-input" aria-label="Go to date">
+      </div>
+      <div class="weekday-row" id="weekdayRow"></div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+      <div class="score-legend" id="scoreLegend"></div>
+      <p class="filter-status" id="filterStatus" hidden aria-live="polite"></p>
+    </section>
+
+    <aside class="side-panel" aria-label="Day editor">
+      <h2 id="editorDate" class="editor-date">—</h2>
+
+      <div class="editor-block">
+        <span class="editor-label">Score</span>
+        <div id="scoreButtons" class="score-buttons"></div>
+      </div>
+
+      <div class="editor-block editor-block-grow" id="noteBlock">
+        <label class="editor-label" for="noteField">Note</label>
+        <textarea id="noteField" placeholder="Write something about this day…"></textarea>
+        <div class="editor-actions">
+          <button id="btnSaveNote" class="btn btn-primary btn-small">Save note</button>
+          <span id="noteStatus" class="note-status"></span>
+        </div>
+      </div>
+
+      <button id="btnClearDay" class="btn btn-danger-outline btn-small">Clear this day</button>
+    </aside>
+
+  </main>
+
+  <section class="stats-panel" aria-label="Score operations">
+    <h2>Score operations</h2>
+    <div class="period-controls" id="statsPeriodControls"></div>
+    <div id="statsResults" class="stats-results"></div>
+  </section>
+
+  <section class="search-panel" aria-label="Search notes">
+    <h2>Search notes</h2>
+    <div class="search-controls">
+      <input type="search" id="searchInput" placeholder="Search note text…" autocomplete="off">
+    </div>
+    <div class="period-controls" id="searchPeriodControls"></div>
+    <div id="searchResults" class="search-results"></div>
+  </section>
+
+  <footer class="app-footer">
+    <span>Day Tracker — local data only.</span>
+  </footer>
+
+</div>
+
+<script src="js/dateutils.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/period.js"></script>
+<script src="js/calendar.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/search.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
