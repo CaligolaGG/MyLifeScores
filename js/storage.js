@@ -130,6 +130,7 @@
     dirty: false, // fallback mode: true if not yet downloaded since last change
     projectDirHandle: null, // FileSystemDirectoryHandle, ready to use as `startIn`
     pendingProjectDirHandle: null, // remembered handle awaiting a permission re-grant
+    pendingLastFileHandle: null, // remembered FileSystemFileHandle for "Open last data file"
   };
 
   // ---------------------------------------------------------------------
@@ -139,6 +140,7 @@
   const IDB_NAME = "day-tracker-app";
   const IDB_STORE = "handles";
   const IDB_KEY = "projectDir";
+  const IDB_LAST_FILE_KEY = "lastFileHandle";
 
   function openHandleDB() {
     return new Promise((resolve, reject) => {
@@ -288,6 +290,59 @@
     },
 
     // ---------------------------------------------------------------
+    // Last opened data file: remembered the same way as the project
+    // folder above (a real FileSystemFileHandle in IndexedDB, not a path
+    // — browsers never expose actual filesystem paths to pages), purely
+    // so "Open last data file" on the load screen can reopen it in one
+    // click instead of going through the picker again.
+    // ---------------------------------------------------------------
+
+    /** Best-effort; failing to remember it just means no shortcut next time. */
+    async rememberLastFile(handle) {
+      try {
+        await idbSet(IDB_LAST_FILE_KEY, handle);
+      } catch (e) {
+        console.warn("Day Tracker: couldn't remember this as the last opened file.", e);
+      }
+    },
+
+    /**
+     * Call once on load. Looks for a remembered file handle in IndexedDB
+     * and reports whether one exists (and its name) so the UI can show
+     * "Open last data file" — the actual open happens in openLastFile(),
+     * since re-granting permission (if needed) requires a user gesture.
+     */
+    async checkLastFile() {
+      let handle;
+      try {
+        handle = await idbGet(IDB_LAST_FILE_KEY);
+      } catch (e) {
+        return { status: "none" };
+      }
+      if (!handle) return { status: "none" };
+      state.pendingLastFileHandle = handle;
+      return { status: "found", name: handle.name };
+    },
+
+    /**
+     * Opens the remembered last file directly — no picker. Re-grants
+     * permission first if needed (fine here: this is only ever called
+     * from a button click, which counts as the required user gesture).
+     */
+    async openLastFile() {
+      const handle = state.pendingLastFileHandle;
+      if (!handle) throw new Error("No remembered data file to open.");
+      let permission = await handle.queryPermission({ mode: "readwrite" });
+      if (permission !== "granted") {
+        permission = await handle.requestPermission({ mode: "readwrite" });
+      }
+      if (permission !== "granted") {
+        throw new Error("Permission for the remembered data file was denied.");
+      }
+      return loadFromFileHandle(handle);
+    },
+
+    // ---------------------------------------------------------------
     // Opening / creating the data file
     // ---------------------------------------------------------------
 
@@ -326,6 +381,7 @@
       state.fileName = handle.name;
       state.data = data;
       state.dirty = false;
+      await storage.rememberLastFile(handle);
       return state;
     },
 
@@ -613,6 +669,7 @@
     state.fileName = handle.name;
     state.data = parsed;
     state.dirty = false;
+    await storage.rememberLastFile(handle);
     return state;
   }
 

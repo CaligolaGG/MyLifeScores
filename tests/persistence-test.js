@@ -148,6 +148,74 @@ function startStaticServer(rootDir) {
   assert.strictEqual(reconnectHidden, true, "there should be nothing to reconnect after forgetting");
   console.log("PASS: forgetting the project folder clears IndexedDB, not just the in-page state");
 
+  // --- "Open last data file": remembering the last-opened FILE itself ---
+  // (separate from the project *folder* above) so it reopens in one click,
+  // with no picker, even after a full browser restart.
+  await page.evaluate(async () => {
+    const opfsRoot = await navigator.storage.getDirectory();
+    const fileHandle = await opfsRoot.getFileHandle("last-file-test.json", { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(
+      JSON.stringify({
+        schemaVersion: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        days: {},
+        months: {},
+        years: {},
+      })
+    );
+    await writable.close();
+    // Only a native OS file dialog (which can't be automated) can produce a
+    // handle to a real on-disk file, so this stubs showOpenFilePicker itself
+    // — same rationale as the showDirectoryPicker stub above.
+    window.showOpenFilePicker = async () => [fileHandle];
+  });
+
+  await page.click("#btnOpenFSA");
+  await page.waitForSelector("#app:not([hidden])");
+  const openedFileName = await page.textContent("#fileName");
+  assert.strictEqual(openedFileName, "last-file-test.json", "opening via the (stubbed) picker should load the OPFS test file");
+
+  await page.click("#btnSwitchFile");
+  await page.waitForFunction(() => document.getElementById("btnOpenLastFile").hidden === false, { timeout: 5000 });
+  const lastFileButtonLabel = await page.textContent("#btnOpenLastFile");
+  assert.ok(
+    lastFileButtonLabel.includes("last-file-test.json"),
+    `"Open last data file" should name the just-opened file, got: "${lastFileButtonLabel}"`
+  );
+  console.log('PASS: "Open last data file" appears on the load screen, naming the just-opened file');
+
+  // Clicking it must reopen directly — no picker involved at all.
+  await page.evaluate(() => {
+    window.showOpenFilePicker = async () => {
+      throw new Error("showOpenFilePicker should not be called by Open last data file");
+    };
+  });
+  await page.click("#btnOpenLastFile");
+  await page.waitForSelector("#app:not([hidden])");
+  const reopenedFileName = await page.textContent("#fileName");
+  assert.strictEqual(reopenedFileName, "last-file-test.json", '"Open last data file" should reopen the same file directly');
+  console.log('PASS: "Open last data file" reopens the remembered file with no picker involved');
+
+  await context.close();
+
+  // --- session 4: the remembered last file survives a full browser restart too
+  context = await chromium.launchPersistentContext(profileDir, launchOpts);
+  page = await context.newPage();
+  await page.goto(url);
+  await page.waitForFunction(() => document.getElementById("btnOpenLastFile").hidden === false, { timeout: 5000 });
+  const lastFileButtonLabelAfterRestart = await page.textContent("#btnOpenLastFile");
+  assert.ok(
+    lastFileButtonLabelAfterRestart.includes("last-file-test.json"),
+    `"Open last data file" should survive a browser restart, got: "${lastFileButtonLabelAfterRestart}"`
+  );
+  await page.click("#btnOpenLastFile");
+  await page.waitForSelector("#app:not([hidden])");
+  const reopenedFileNameAfterRestart = await page.textContent("#fileName");
+  assert.strictEqual(reopenedFileNameAfterRestart, "last-file-test.json", "the remembered last file should reopen correctly after a restart too");
+  console.log('PASS: "Open last data file" survives closing and reopening the browser, just like the project folder');
+
   await context.close();
   server.close();
   fs.rmSync(profileDir, { recursive: true, force: true });

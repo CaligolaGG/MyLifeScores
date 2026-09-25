@@ -17,6 +17,7 @@
     els.appEl = document.getElementById("app");
     els.fsaButtons = document.getElementById("fsaButtons");
     els.fallbackButtons = document.getElementById("fallbackButtons");
+    els.btnOpenLastFile = document.getElementById("btnOpenLastFile");
     els.btnOpenFSA = document.getElementById("btnOpenFSA");
     els.btnNewFSA = document.getElementById("btnNewFSA");
     els.fallbackImportInput = document.getElementById("fallbackImportInput");
@@ -84,6 +85,9 @@
     els.loadScreen.hidden = false;
     clearLoadError();
     els.fallbackImportInput.value = "";
+    // Refresh so "Open last data file" reflects whatever was just closed,
+    // not whatever was remembered when the page first loaded.
+    if (App.storage.supportsFSA()) initLastFileUI();
   }
 
   function showProjectFolderHint(text) {
@@ -97,6 +101,29 @@
     els.btnReconnectProjectFolder.hidden = true;
     els.btnForgetProjectFolder.hidden = false;
     showProjectFolderHint(`Project folder ready: “${name}”. Open/Create will start there.`);
+  }
+
+  /**
+   * Runs once on load (Chrome/Edge only): checks IndexedDB for the file
+   * opened/created last time and, if found, shows "Open last data file" so
+   * getting back in is one click instead of a re-pick. Permission is
+   * (re-)granted inside the click handler itself — see storage.js
+   * openLastFile() for why that has to happen there rather than here.
+   */
+  async function initLastFileUI() {
+    let result;
+    try {
+      result = await App.storage.checkLastFile();
+    } catch (err) {
+      result = { status: "none" };
+    }
+
+    if (result.status === "found") {
+      els.btnOpenLastFile.hidden = false;
+      els.btnOpenLastFile.textContent = `Open last data file — “${result.name}”`;
+    } else {
+      els.btnOpenLastFile.hidden = true;
+    }
   }
 
   /**
@@ -133,10 +160,20 @@
   function wireLoadScreen() {
     if (App.storage.supportsFSA()) {
       els.fsaButtons.hidden = false;
+      initLastFileUI();
       initProjectFolderUI();
     } else {
       els.fallbackButtons.hidden = false;
     }
+
+    els.btnOpenLastFile.addEventListener("click", async () => {
+      try {
+        await App.storage.openLastFile();
+        onFileReady();
+      } catch (err) {
+        showLoadError(err);
+      }
+    });
 
     els.btnOpenFSA.addEventListener("click", async () => {
       try {

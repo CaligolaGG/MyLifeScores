@@ -28,9 +28,10 @@ This was a deliberate, discussed design choice — not a default:
 - **Score/note data is never written to `localStorage`, `sessionStorage`,
   or IndexedDB.** All of it lives in plain JS variables in memory
   (`App.storage.state` in `js/storage.js`). Close the tab/window and it's
-  gone — by design. Reopen `index.html` and you pick your data file again.
-  The one deliberate exception — remembering your project *folder*, not
-  any data — is explained just below.
+  gone — by design: the JSON file on disk is still the only real copy.
+  Two deliberate, UI-only exceptions — remembering your project *folder*,
+  and remembering the last data *file* you opened — are explained just
+  below; neither one stores any score/note data itself.
 - Every time you change a score, click **Save note**, or switch to a
   different day while a note has unsaved edits (auto-save — see Features
   below), the app writes the *entire* JSON file back to disk immediately.
@@ -42,13 +43,11 @@ This was a deliberate, discussed design choice — not a default:
 get a real, persistent handle to a file on your disk (`FileSystemFileHandle`),
 then writes to it directly with `handle.createWritable()`. This works even
 when `index.html` is opened straight from disk via `file://` — no local
-server needed. The trade-off: the browser never remembers *which data
-file* you picked once the page is closed — we deliberately don't persist
-*that* handle anywhere, unlike the project folder described below, so you
-re-select your data file each time you open the app. That's expected, not
-a bug: it's what "the JSON file is the real database, not cached" means in
-practice. The project folder is a navigation convenience; the data file
-selection stays an explicit, every-time action.
+server needed. Every file opened/created this way (and every file dropped
+onto the load screen with a live handle) is also remembered as the "last
+data file" — see **"Open last data file"** below — so in practice you only
+go through Open/Create's own picker again when you actually want a
+*different* file; picking up where you left off is one click.
 
 ### Fallback mode: any other browser
 
@@ -105,7 +104,7 @@ actually keep your data:
     UI, for when you want to point somewhere else or stop remembering
     entirely.
 
-  This is the one deliberate exception to "no browser storage" in this
+  This is one of two deliberate exceptions to "no browser storage" in this
   app: it stores a folder *handle* (a UI convenience), never any
   score/note data, and it's fully optional and clearable.
 
@@ -113,6 +112,33 @@ There's no way for a `file://` page to know its own containing folder, so
 none of this can be "automatic on the very first-ever run ever" — some
 first pick is unavoidable. After that, normal use is "picked once, then
 it's just there" across reloads and restarts alike.
+
+### "Open last data file" (remembering the file itself)
+
+The second exception, added alongside the project-folder one and working
+exactly the same way: every time a data file is opened or created via the
+File System Access API (`openExistingFSA`, `createNewFSA`, or a
+live-handle drag-and-drop via `openFromDroppedHandle`), its
+`FileSystemFileHandle` is saved into IndexedDB
+(`rememberLastFile()`/`checkLastFile()`/`openLastFile()` in
+`js/storage.js`, right next to the project-folder helpers, same
+`idbSet`/`idbGet` wrapper, different key). On every load,
+`checkLastFile()` looks for it and, if found, the load screen shows an
+**"Open last data file — "‹name›""** button above "Open existing data
+file" (`js/main.js` → `initLastFileUI()`); clicking it calls
+`openLastFile()`, which re-grants permission if needed (that's why it has
+to happen inside the click handler — a user gesture is required) and
+loads the file directly, with no picker dialog at all. It reappears
+correctly after a full browser restart, exactly like the project folder
+(re-granting permission silently when Chrome allows it, otherwise via the
+same one-click flow). Switching to a *different* file (Open existing,
+Create new, or drag-and-drop with a live handle) simply updates which
+file is remembered as "last" — there's no separate "forget" control for
+this one, since picking any other file already replaces it.
+
+Like the project folder, this stores a file *handle* (a UI convenience for
+getting back in quickly), never the file's contents — those are still
+read fresh from disk every time, exactly as in the primary open flow.
 
 ### Drag & drop (load screen)
 
@@ -203,7 +229,7 @@ day-tracker/
 │   └── styles.css      All styling
 ├── js/
 │   ├── dateutils.js     Date math shared by everything (Monday-start weeks)
-│   ├── storage.js       Data model (days + months + years) + file I/O (FSA + fallback) + project-folder memory (IndexedDB)
+│   ├── storage.js       Data model (days + months + years) + file I/O (FSA + fallback) + project-folder & last-file memory (IndexedDB)
 │   ├── period.js        Reusable Week/Month/Year/Custom[/All time] picker
 │   ├── calendar.js       Month grid + Day/Month/Year editor panel + score-legend filter
 │   ├── stats.js          "Score operations" panel (avg/sum/min/max/distribution)
@@ -222,6 +248,11 @@ namespace is what makes "just double-click index.html" possible at all.
 
 ## Features
 
+- **Open last data file**: on the load screen (Chrome/Edge only), a
+  button above "Open existing data file" reopens whatever file was
+  opened/created last time, in one click — no picker, and it survives
+  browser restarts. Only appears once there's something to remember; see
+  "Open last data file" under storage above for how it works.
 - **Calendar** (left): month grid, Monday-first weeks, prev/next/Today
   navigation, a **Go to date** picker that jumps straight to any date, each
   day colour-coded by score with a small dot if it has a note. **Keyboard:**
@@ -331,37 +362,50 @@ node tests/persistence-test.js
   mode and confirms ‹ / › now steps whole years, and confirms clicking a
   day cell snaps back to Day mode with that day's own data intact). 35
   checks.
-- **`tests/persistence-test.js`** specifically covers the project-folder
-  memory feature: it launches a real Chromium profile, sets a project
-  folder, **closes the browser entirely**, relaunches against the same
-  profile directory, and confirms the folder comes back with no re-pick —
-  an actual close/reopen, not a same-tab reload. It also checks the
-  one-click reconnect path and that "Forget remembered folder" clears
-  IndexedDB, not just the in-page state. Runs over a throwaway local
+- **`tests/persistence-test.js`** covers both handle-remembering features,
+  since both need a real `FileSystemHandle` and a genuine browser restart
+  to test honestly (not just a same-tab reload): it launches a real
+  Chromium profile, sets a project folder, **closes the browser
+  entirely**, relaunches against the same profile directory, and confirms
+  the folder comes back with no re-pick. It also checks the one-click
+  reconnect path and that "Forget remembered folder" clears IndexedDB, not
+  just the in-page state. Then, for **"Open last data file"**: opens a
+  file via a stubbed picker backed by a real handle, confirms the button
+  appears on the load screen naming that file, confirms clicking it
+  reopens the file with `showOpenFilePicker` stubbed to throw (proving no
+  picker is invoked), and confirms the button and reopen both still work
+  correctly after a full browser restart. Runs over a throwaway local
   `http://127.0.0.1` server rather than `file://`, because the Origin
-  Private File System it uses to fabricate a real, structured-cloneable
-  `FileSystemDirectoryHandle` for testing is unavailable on `file://`
-  origins — the shipped app is unaffected, this is purely a test-harness
-  detail (see the comments at the top of the file). 5 checks.
+  Private File System it uses to fabricate real, structured-cloneable
+  `FileSystemDirectoryHandle`/`FileSystemFileHandle`s for testing is
+  unavailable on `file://` origins — the shipped app is unaffected, this
+  is purely a test-harness detail (see the comments at the top of the
+  file). 8 checks.
 
-This is how the app was verified while building it — all 40 checks across
+This is how the app was verified while building it — all 43 checks across
 both scripts pass.
 
 ## Known limitations
 
 - File System Access API is Chromium-only (Chrome, Edge, Opera, Brave).
   Firefox and Safari always use compatibility mode.
-- Every page load requires re-selecting your data file — intentional,
-  see "no local storage" above.
+- In fallback mode (Firefox/Safari), every page load requires
+  re-importing your data file — intentional, see "no local storage"
+  above; there's no way to remember a file *handle* there since that
+  mode never gets one from the browser in the first place. In FSA mode
+  (Chrome/Edge), "Open last data file" makes reopening the same file a
+  single click, but a *different* file is always an explicit pick — data
+  itself is still never cached, only the handle used to get back to it.
 - Fallback mode's "Save & Download" relies on your browser's download
   behavior to overwrite the original file; if your browser is set to ask
   where to save each download, choose the original file's location and
   confirm the overwrite.
-- The remembered project folder lives in IndexedDB for this page's origin.
-  Clearing site data/history for this app, using a different browser
-  profile, or opening `index.html` from a different path all mean it
-  won't be found — you'd pick it again (or click "Reconnect" if
-  permission just needs re-granting).
+- Both the remembered project folder and the remembered last data file
+  live in IndexedDB for this page's origin. Clearing site data/history
+  for this app, using a different browser profile, or opening
+  `index.html` from a different path all mean they won't be found — the
+  usual pickers/buttons just won't have anything to show, and you go back
+  to picking normally.
 - Month/Year mode has no dedicated "jump to a specific month/year" input
   of its own — you get there via ‹ / › (which step by year while in Year
   mode), Shift+←/→, or by using Go to date/Today in Day mode and then
